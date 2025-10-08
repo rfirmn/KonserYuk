@@ -139,6 +139,84 @@ app.post("/apply-voucher", (req, res) => {
   res.json({ message: "Voucher diterapkan", order });
 });
 
+// 5. Pembayaran tiket (Process: Pembayaran Tiket)
+// Simulasi: menerima payment_method, "memanggil" payment gateway mock
+app.post("/payments", (req, res) => {
+    const { orderId, payment_method } = req.body;
+    const orderIndex = tempOrders.findIndex(o => o.id === orderId);
+    if (orderIndex === -1) return res.status(400).json({ error: "Order tidak ditemukan" });
+  
+    const order = tempOrders[orderIndex];
+    // total final (bila ada voucher)
+    const finalTotal = order.totalAfterVoucher ?? order.total;
+  
+    // Simulasi: kirim ke payment gateway (mock)
+    // Kita akan anggap sukses jika payment_method terisi
+    if (!payment_method) return res.status(400).json({ error: "Metode pembayaran harus diisi" });
+  
+    // Mock response dari payment gateway
+    const paymentStatus = "SUCCESS"; // atau "FAILED" untuk simulasi error
+    const transactionId = uuidv4();
+  
+    if (paymentStatus === "SUCCESS") {
+      // Simpan ke transaksi final
+      const trx = {
+        id: transactionId,
+        orderId: order.id,
+        userId: order.userId,
+        concertId: order.concertId,
+        category: order.category,
+        quantity: order.quantity,
+        amount: finalTotal,
+        payment_method,
+        status: "PAID",
+        createdAt: new Date().toISOString()
+      };
+      transactions.push(trx);
+  
+      // Kurangi kapasitas
+      const concert = findConcert(order.concertId);
+      const cat = concert.categories.find(c => c.code === order.category);
+      cat.capacity -= order.quantity;
+  
+      // Hapus order temp
+      tempOrders.splice(orderIndex, 1);
+  
+      // Generate e-ticket (QR)
+      const eticketId = uuidv4();
+      const qrData = JSON.stringify({ eticketId, transactionId, userId: trx.userId });
+      QRCode.toDataURL(qrData)
+        .then(qrImage => {
+          const et = {
+            id: eticketId,
+            transactionId,
+            userId: trx.userId,
+            concertId: trx.concertId,
+            category: trx.category,
+            quantity: trx.quantity,
+            qr: qrImage,
+            status: "ACTIVE",
+            createdAt: new Date().toISOString()
+          };
+          etickets.push(et);
+          res.json({ message: "Pembayaran sukses", transaction: trx, eticket: et });
+        })
+        .catch(err => {
+          // walau QR gagal, transaksi telah tercatat
+          res.status(500).json({ error: "Gagal generate QR", err: err.message });
+        });
+    } else {
+      res.status(400).json({ message: "Pembayaran gagal" });
+    }
+  });
+  
+  // 6. Melihat daftar tiket saya (Process: Melihat Daftar Tiket)
+  app.get("/my-tickets/:userId", (req, res) => {
+    const userId = req.params.userId;
+    const list = etickets.filter(e => e.userId === userId);
+    res.json({ data: list });
+  });
+  
 // 7. Lihat e-ticket (by eticket id)
 app.get("/etickets/:id", (req, res) => {
   const e = etickets.find(x => x.id === req.params.id);

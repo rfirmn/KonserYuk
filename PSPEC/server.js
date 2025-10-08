@@ -240,6 +240,42 @@ app.post("/admin/validate", (req, res) => {
   res.json({ message: "Tiket valid - akses diperbolehkan", et });
 });
 
+// 9. Admin: CRUD konser (Process: Pengelolaan Data Konser)
+app.post("/admin/concerts", (req, res) => {
+  const { title, date, location, categories, description } = req.body;
+  const id = uuidv4();
+  concerts.push({ id, title, date, location, categories, description });
+  res.json({ message: "Konser ditambahkan", id });
+});
+
+app.put("/admin/concerts/:id", (req, res) => {
+  const i = concerts.findIndex(c => c.id === req.params.id);
+  if (i === -1) return res.status(404).json({ error: "Konser tidak ditemukan" });
+  Object.assign(concerts[i], req.body);
+  res.json({ message: "Konser diperbarui", concert: concerts[i] });
+});
+
+app.delete("/admin/concerts/:id", (req, res) => {
+  const i = concerts.findIndex(c => c.id === req.params.id);
+  if (i === -1) return res.status(404).json({ error: "Konser tidak ditemukan" });
+  concerts.splice(i, 1);
+  res.json({ message: "Konser dihapus" });
+});
+
+// 10. Admin: Manajemen voucher (Process: Manajemen Voucher)
+app.post("/admin/vouchers", (req, res) => {
+  const { code, type, value, expiry, active } = req.body;
+  vouchers.push({ code, type, value, expiry, active: active ?? true });
+  res.json({ message: "Voucher ditambahkan", code });
+});
+
+app.put("/admin/vouchers/:code", (req, res) => {
+  const i = vouchers.findIndex(v => v.code === req.params.code);
+  if (i === -1) return res.status(404).json({ error: "Voucher tidak ditemukan" });
+  Object.assign(vouchers[i], req.body);
+  res.json({ message: "Voucher diperbarui", voucher: vouchers[i] });
+});
+
 // ----------------------
 // Start server
 // ----------------------

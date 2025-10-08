@@ -139,6 +139,28 @@ app.post("/apply-voucher", (req, res) => {
   res.json({ message: "Voucher diterapkan", order });
 });
 
+// 7. Lihat e-ticket (by eticket id)
+app.get("/etickets/:id", (req, res) => {
+  const e = etickets.find(x => x.id === req.params.id);
+  if (!e) return res.status(404).json({ error: "E-ticket tidak ditemukan" });
+  res.json({ data: e });
+});
+
+// 8. Validasi tiket (Admin memindai QR) (Process: Validasi Tiket)
+app.post("/admin/validate", (req, res) => {
+  // input: eticketId
+  const { eticketId } = req.body;
+  const et = etickets.find(x => x.id === eticketId);
+  if (!et) return res.status(404).json({ error: "E-ticket tidak ditemukan" });
+
+  if (et.status !== "ACTIVE") return res.status(400).json({ error: "Tiket sudah digunakan atau tidak aktif" });
+
+  // mark as used
+  et.status = "USED";
+  et.usedAt = new Date().toISOString();
+
+  res.json({ message: "Tiket valid - akses diperbolehkan", et });
+});
 
 // ----------------------
 // Start server

@@ -86,6 +86,61 @@ app.get("/concerts/:id", (req, res) => {
 });
 
 
+// 3. Pembelian tiket (Process: Pembelian Tiket)
+// Buat pesanan sementara (transaksi temp)
+app.post("/orders", (req, res) => {
+  const { userId, concertId, category, quantity } = req.body;
+  const user = users.find(u => u.id === userId);
+  if (!user) return res.status(400).json({ error: "User tidak ditemukan" });
+
+  const concert = findConcert(concertId);
+  if (!concert) return res.status(400).json({ error: "Konser tidak ditemukan" });
+
+  const cat = concert.categories.find(c => c.code === category);
+  if (!cat) return res.status(400).json({ error: "Kategori tidak ditemukan" });
+  if (cat.capacity < quantity) return res.status(400).json({ error: "Kapasitas tidak mencukupi" });
+
+  const total = calculatePrice(concert, category, quantity);
+
+  const order = {
+    id: uuidv4(),
+    userId,
+    concertId,
+    category,
+    quantity,
+    total,
+    createdAt: new Date().toISOString()
+  };
+
+  tempOrders.push(order);
+  res.json({ message: "Pesanan sementara dibuat", order });
+});
+
+// 4. Penerapan kode voucher (Process: Penerapan Kode Voucher)
+app.post("/apply-voucher", (req, res) => {
+  const { orderId, code } = req.body;
+  const order = tempOrders.find(o => o.id === orderId);
+  if (!order) return res.status(400).json({ error: "Order tidak ditemukan" });
+
+  const v = findVoucher(code);
+  if (!v) return res.status(400).json({ error: "Voucher tidak valid atau tidak aktif" });
+
+  // cek expiry
+  const now = new Date();
+  if (new Date(v.expiry) < now) return res.status(400).json({ error: "Voucher kedaluwarsa" });
+
+  let discount = 0;
+  if (v.type === "percent") discount = Math.round(order.total * (v.value / 100));
+  else if (v.type === "nominal") discount = v.value;
+
+  const newTotal = Math.max(0, order.total - discount);
+  order.voucher = { code: v.code, discount, type: v.type };
+  order.totalAfterVoucher = newTotal;
+
+  res.json({ message: "Voucher diterapkan", order });
+});
+
+
 // ----------------------
 // Start server
 // ----------------------

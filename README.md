@@ -1,4 +1,4 @@
-# 🎵 BBO Event - Web Penjualan Tiket Konser
+# 🎵 konser-yuk
 
 Aplikasi web lengkap untuk manajemen dan penjualan tiket konser dengan sistem pembayaran terintegrasi.
 

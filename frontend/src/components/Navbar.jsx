@@ -16,7 +16,7 @@ const Navbar = () => {
       <div className="container mx-auto px-4">
         <div className="flex justify-between items-center h-16">
           <Link to="/" className="text-2xl font-bold bg-gradient-to-r from-bbo-orange to-bbo-red bg-clip-text text-transparent">
-            BBO Event
+            Konser-yuk
           </Link>
 
           <div className="flex items-center space-x-6">

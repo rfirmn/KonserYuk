@@ -186,7 +186,7 @@ const Register = () => {
             <h1 className="text-4xl font-bold text-bbo-red font-poppins mb-2">
               Daftar Akun
             </h1>
-            <p className="text-gray-600">Buat akun BBO Event Anda</p>
+            <p className="text-gray-600">Buat akun Konser-yuk Anda</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">

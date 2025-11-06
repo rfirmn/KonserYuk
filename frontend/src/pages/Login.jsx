@@ -31,7 +31,7 @@ const Login = () => {
         <div className="bg-white rounded-2xl shadow-2xl p-8">
           <div className="text-center mb-8">
             <h1 className="text-4xl font-bold text-bbo-red font-poppins mb-2">
-              BBO Event
+              Konser-yuk
             </h1>
             <p className="text-gray-600">Silahkan Login Terlebih Dahulu</p>
           </div>

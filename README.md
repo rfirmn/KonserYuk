@@ -137,7 +137,7 @@ Pastikan sudah terinstall:
 
 ```bash
 git clone <repository-url>
-cd bbo-event
+cd KonserYuk
 ```
 
 ### 2. Install Backend Dependencies

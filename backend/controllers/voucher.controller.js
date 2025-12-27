@@ -22,7 +22,7 @@ const getAllVouchers = async (req, res) => {
 const getVoucherById = async (req, res) => {
   try {
     const voucher = await Voucher.findByPk(req.params.id);
-    
+
     if (!voucher) {
       return res.status(404).json({
         success: false,
@@ -55,11 +55,22 @@ const createVoucher = async (req, res) => {
       });
     }
 
+    // Convert date to datetime format
+    const formatDateTime = (dateString, isEndDate = false) => {
+      const date = new Date(dateString);
+      if (isEndDate) {
+        date.setHours(23, 59, 59, 999);
+      } else {
+        date.setHours(0, 0, 0, 0);
+      }
+      return date;
+    };
+
     const voucher = await Voucher.create({
       kode,
       diskon,
-      aktif_dari,
-      aktif_sampai
+      aktif_dari: formatDateTime(aktif_dari),
+      aktif_sampai: formatDateTime(aktif_sampai, true)
     });
 
     res.status(201).json({
@@ -79,7 +90,7 @@ const createVoucher = async (req, res) => {
 const updateVoucher = async (req, res) => {
   try {
     const voucher = await Voucher.findByPk(req.params.id);
-    
+
     if (!voucher) {
       return res.status(404).json({
         success: false,
@@ -87,7 +98,26 @@ const updateVoucher = async (req, res) => {
       });
     }
 
-    await voucher.update(req.body);
+    // Convert date to datetime format if dates are provided
+    const formatDateTime = (dateString, isEndDate = false) => {
+      const date = new Date(dateString);
+      if (isEndDate) {
+        date.setHours(23, 59, 59, 999);
+      } else {
+        date.setHours(0, 0, 0, 0);
+      }
+      return date;
+    };
+
+    const updateData = { ...req.body };
+    if (updateData.aktif_dari) {
+      updateData.aktif_dari = formatDateTime(updateData.aktif_dari);
+    }
+    if (updateData.aktif_sampai) {
+      updateData.aktif_sampai = formatDateTime(updateData.aktif_sampai, true);
+    }
+
+    await voucher.update(updateData);
 
     res.json({
       success: true,
@@ -106,7 +136,7 @@ const updateVoucher = async (req, res) => {
 const deleteVoucher = async (req, res) => {
   try {
     const voucher = await Voucher.findByPk(req.params.id);
-    
+
     if (!voucher) {
       return res.status(404).json({
         success: false,
@@ -132,9 +162,9 @@ const deleteVoucher = async (req, res) => {
 const validateVoucherCode = async (req, res) => {
   try {
     const { kode } = req.params;
-    
+
     const voucher = await Voucher.findOne({ where: { kode } });
-    
+
     if (!voucher) {
       return res.status(404).json({
         success: false,

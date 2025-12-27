@@ -34,7 +34,7 @@ const sendTicketEmail = async (to, ticketData) => {
             
             <h2 style="color: #F37021;">Kode Tiket Anda:</h2>
             <div style="text-align: center; margin: 20px 0;">
-              <img src="${qrCode}" alt="QR Code" style="max-width: 200px;">
+              <img src="cid:qrcode-tiket" alt="QR Code" style="max-width: 200px;">
               <p style="font-size: 12px; color: #666; margin-top: 10px;">Kode QR: ${ticket.kode_qr}</p>
             </div>
             
@@ -47,7 +47,15 @@ const sendTicketEmail = async (to, ticketData) => {
             </div>
           </div>
         </div>
-      `
+      `,
+      attachments: [
+        {
+          filename: 'qrcode.png',
+          path: qrCode,       // Data base64 dari controller
+          cid: 'qrcode-tiket', // STRING INI HARUS SAMA DENGAN YG DI HTML (cid:qrcode-tiket)
+          contentDisposition: 'inline'
+        }
+      ]
     };
 
     await transporter.sendMail(mailOptions);

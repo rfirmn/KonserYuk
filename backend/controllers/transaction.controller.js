@@ -20,10 +20,8 @@ const handleMidtransNotification = async (req, res) => {
 
     let status = 'pending';
 
-    // --- PERBAIKAN LOGIKA DISINI ---
     const isTesting = true;
 
-    // Jika isTesting TRUE atau status dari midtrans valid, maka dianggap sukses
     if (isTesting || transaction_status === 'capture' || transaction_status === 'settlement') {
       status = 'success';
 

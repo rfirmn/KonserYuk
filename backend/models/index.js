@@ -167,6 +167,11 @@ const Transaction = sequelize.define('Transaction', {
       key: 'id'
     }
   },
+  total_bayar: {
+    type: DataTypes.DECIMAL(10, 3),
+    allowNull: false,
+    defaultValue: 0
+  },
   status_pembayaran: {
     type: DataTypes.ENUM('pending', 'success', 'failed', 'expired'),
     defaultValue: 'pending'

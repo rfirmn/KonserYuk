@@ -70,13 +70,15 @@ const purchaseTicket = async (req, res) => {
       user_id,
       ticket_id: ticket.id,
       order_id,
-      total_bayar: total_harga, // Pastikan field ini ada di model Transaction
-      status_pembayaran: 'success', // <--- Langsung SUKSES
+      total_bayar: total_harga,
+      status_pembayaran: 'success',
       payment_type: 'bypass_manual'
     });
 
     // 6. Update Kuota Event
     await event.update({ kuota: event.kuota - 1 });
+
+    // const qrCodeImage = await QRCode.toDataURL(savedTicket.kode_qr);
 
     // 7. Kirim Email Tiket (Langsung dikirim karena sudah sukses)
     try {

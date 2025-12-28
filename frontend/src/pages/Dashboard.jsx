@@ -34,10 +34,26 @@ const Dashboard = () => {
   const fetchStats = async () => {
     try {
       const eventsResponse = await api.get('/events');
-      setStats(prev => ({
-        ...prev,
-        totalEvents: eventsResponse.data.data?.length || 0
-      }));
+
+      const transactionsResponse = await api.get('/transactions');
+      const transactions = transactionsResponse.data.data || [];
+
+      const successTransactions = transactions.filter(
+        (t) => t.status_pembayaran === 'success'
+      );
+
+      const ticketCount = successTransactions.length;
+
+      const revenueSum = successTransactions.reduce((acc, curr) => {
+        return acc + (parseFloat(curr.total_bayar) || 0);
+      }, 0);
+
+      setStats({
+        totalEvents: eventsResponse.data.data?.length || 0,
+        totalTickets: ticketCount,
+        totalRevenue: revenueSum
+      });
+
     } catch (error) {
       console.error('Fetch stats error:', error);
     }
@@ -220,7 +236,7 @@ const Dashboard = () => {
           <div className="bg-gradient-to-br from-bbo-orange to-bbo-red text-white rounded-xl p-6 shadow-lg">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-orange-100 mb-1">Total Pendapatan</p>
+                <p className="text-orange-100 mb-1">Total Transaksi</p>
                 <p className="text-3xl font-bold">Rp {stats.totalRevenue.toLocaleString('id-ID')}</p>
               </div>
               <svg className="w-12 h-12 text-orange-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">

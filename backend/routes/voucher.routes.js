@@ -11,8 +11,8 @@ const {
 const { authMiddleware, adminMiddleware } = require('../middlewares/auth');
 
 router.get('/', authMiddleware, adminMiddleware, getAllVouchers);
-router.get('/:id', authMiddleware, adminMiddleware, getVoucherById);
 router.get('/validate/:kode', authMiddleware, validateVoucherCode);
+router.get('/:id', authMiddleware, adminMiddleware, getVoucherById);
 router.post('/', authMiddleware, adminMiddleware, createVoucher);
 router.put('/:id', authMiddleware, adminMiddleware, updateVoucher);
 router.delete('/:id', authMiddleware, adminMiddleware, deleteVoucher);

@@ -1,16 +1,63 @@
-const { Ticket, Event, User, Transaction, Voucher } = require('../models');
-const { generateQRCode } = require('../utils/qrcode');
-const { sendTicketEmail } = require('../utils/email');
-const { createMidtransTransaction } = require('../utils/midtrans'); // Import tetap ada (sesuai request config), tapi tidak dipakai
-const { v4: uuidv4 } = require('uuid');
+// =============================================================================
+// TICKET CONTROLLER - dengan ASYNC QUEUE PROCESSING
+// =============================================================================
+// Controller ini sudah direfactor untuk high-traffic flash sale scenarios:
+//
+// PERUBAHAN UTAMA:
+// SEBELUM: purchaseTicket() langsung create ticket di database (synchronous)
+// SEKARANG: purchaseTicket() add job ke queue, return "processing" status
+//
+// ALUR BARU:
+// 1. User POST /api/tickets/purchase
+// 2. Server validate dan add job ke BullMQ queue
+// 3. Server return job_id dan status "processing" (immediate response)
+// 4. Worker process job secara async dengan atomic operations
+// 5. User polling GET /api/tickets/purchase-status/:jobId untuk cek status
+// 6. Saat completed, user mendapatkan ticket data
+//
+// BENEFIT:
+// - Non-blocking: User langsung dapat response
+// - Scalable: Bisa handle ribuan concurrent requests
+// - Reliable: Retry mechanism untuk failed purchases
+// - Atomic: Prevent race condition dengan queue + transaction
+// =============================================================================
 
+const { Ticket, Event, User } = require('../models');
+const { addTicketPurchaseJob, getJobStatus } = require('../config/queue');
+
+// -----------------------------------------------------------------------------
+// PURCHASE TICKET - Add job to queue (ASYNC)
+// -----------------------------------------------------------------------------
+/**
+ * Endpoint untuk membeli tiket event
+ * Request langsung masuk ke queue, tidak langsung create ticket
+ * 
+ * @route POST /api/tickets/purchase
+ * @access Private (requires authentication)
+ */
 const purchaseTicket = async (req, res) => {
   try {
     const { event_id, voucher_code } = req.body;
-    const user_id = req.user.id; // Pastikan middleware auth sudah jalan
+    const user_id = req.user.id; // Dari authMiddleware
 
-    // 1. Validasi Event
-    const event = await Event.findByPk(event_id);
+    // -------------------------------------------------------------------------
+    // STEP 1: Validasi input
+    // -------------------------------------------------------------------------
+    if (!event_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'event_id harus diisi'
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // STEP 2: Validasi event exists (quick check)
+    // -------------------------------------------------------------------------
+    // Validasi ringan di sini, validasi lengkap di worker
+    const event = await Event.findByPk(event_id, {
+      attributes: ['id', 'nama', 'kuota'] // Only select minimal fields
+    });
+
     if (!event) {
       return res.status(404).json({
         success: false,
@@ -18,87 +65,44 @@ const purchaseTicket = async (req, res) => {
       });
     }
 
+    // Quick check kuota (tidak atomik, hanya untuk fast feedback)
     if (event.kuota <= 0) {
       return res.status(400).json({
         success: false,
-        message: 'Kuota tiket habis'
+        message: 'Kuota tiket sudah habis'
       });
     }
 
-    // 2. Hitung Harga & Diskon (Logika Nominal)
-    let total_harga = parseFloat(event.harga);
-
-    if (voucher_code) {
-      const voucher = await Voucher.findOne({ where: { kode: voucher_code } });
-
-      if (voucher) {
-        const now = new Date();
-        if (now >= voucher.aktif_dari && now <= voucher.aktif_sampai) {
-          // Asumsi diskon adalah nominal (Rupiah), bukan persen
-          total_harga -= total_harga * (voucher.diskon / 100);
-
-          // Validasi agar harga tidak minus
-          if (total_harga < 0) {
-            total_harga = 0;
-          }
-        }
-      }
-    }
-
-    // 3. Generate QR Code & Data Pendukung
-    const kode_qr = uuidv4();
-    const qrCodeDataURL = await generateQRCode(kode_qr); // Generate gambar QR Base64
-    const order_id = `ORDER-${Date.now()}-${uuidv4()}`; // Order ID unik
-
-    // 4. Create Ticket (Langsung Simpan QR Image ke DB)
-    const ticket = await Ticket.create({
+    // -------------------------------------------------------------------------
+    // STEP 3: Add job to queue
+    // -------------------------------------------------------------------------
+    const jobData = {
       user_id,
       event_id,
-      kode_qr,
-      qr_image: qrCodeDataURL, // <--- PENTING: Simpan gambar QR ke database
-      total_harga,
-      status: 'aktif', // Langsung aktif karena bypass
-      waktu_beli: new Date()
+      voucher_code: voucher_code || null
+    };
+
+    // Add job dengan priority (opsional: bisa prioritize VIP users)
+    const job = await addTicketPurchaseJob(jobData, {
+      priority: req.user.role === 'admin' ? 1 : 5 // Admin priority higher
     });
 
-    // 5. Create Transaction (BYPASS LOGIC: Langsung Success)
-    /* CODE LAMA (MIDTRANS) - DIKOMENTARI UNTUK BYPASS:
-       const midtransResponse = await createMidtransTransaction({ ... }); 
-    */
-
-    await Transaction.create({
-      user_id,
-      ticket_id: ticket.id,
-      order_id,
-      total_bayar: total_harga,
-      status_pembayaran: 'success',
-      payment_type: 'bypass_manual'
-    });
-
-    // 6. Update Kuota Event
-    await event.update({ kuota: event.kuota - 1 });
-
-    // const qrCodeImage = await QRCode.toDataURL(savedTicket.kode_qr);
-
-    // 7. Kirim Email Tiket (Langsung dikirim karena sudah sukses)
-    try {
-      await sendTicketEmail(req.user.email, {
-        event: event,
-        ticket: ticket,
-        qrCode: qrCodeDataURL
-      });
-    } catch (emailError) {
-      console.error("Gagal kirim email, tapi transaksi tetap sukses:", emailError);
-    }
-
-    // 8. Response ke Frontend
-    res.status(201).json({
+    // -------------------------------------------------------------------------
+    // STEP 4: Return immediate response dengan job ID
+    // -------------------------------------------------------------------------
+    // User mendapat response cepat tanpa menunggu processing selesai
+    res.status(202).json({ // 202 = Accepted (processing)
       success: true,
-      message: 'Tiket berhasil dibeli (Mode Testing/Bypass).',
+      message: 'Pembelian tiket sedang diproses',
       data: {
-        ticket,
-        qr_code: qrCodeDataURL,
-        transaction_status: 'success'
+        job_id: job.id,
+        status: 'processing',
+        event: {
+          id: event.id,
+          nama: event.nama
+        },
+        // Instruksi untuk frontend
+        check_status_url: `/api/tickets/purchase-status/${job.id}`
       }
     });
 
@@ -106,15 +110,108 @@ const purchaseTicket = async (req, res) => {
     console.error('Purchase ticket error:', error);
     res.status(500).json({
       success: false,
-      message: 'Gagal membeli tiket'
+      message: 'Gagal memproses pembelian tiket'
     });
   }
 };
 
+// -----------------------------------------------------------------------------
+// CHECK PURCHASE STATUS - untuk polling status job
+// -----------------------------------------------------------------------------
+/**
+ * Endpoint untuk mengecek status pembelian tiket
+ * Frontend harus polling endpoint ini untuk update status
+ * 
+ * @route GET /api/tickets/purchase-status/:jobId
+ * @access Private (requires authentication)
+ */
+const checkPurchaseStatus = async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    // -------------------------------------------------------------------------
+    // Get job status dari queue
+    // -------------------------------------------------------------------------
+    const jobStatus = await getJobStatus(jobId);
+
+    if (jobStatus.status === 'not_found') {
+      return res.status(404).json({
+        success: false,
+        message: 'Job tidak ditemukan',
+        code: 'JOB_NOT_FOUND'
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // Map job status ke response yang user-friendly
+    // -------------------------------------------------------------------------
+    let response = {
+      success: true,
+      job_id: jobId,
+      status: jobStatus.status,
+      progress: jobStatus.progress || 0,
+      attempts: jobStatus.attempts || 0
+    };
+
+    // Handle different job states
+    switch (jobStatus.status) {
+      case 'waiting':
+      case 'delayed':
+        response.message = 'Pembelian dalam antrian, mohon tunggu...';
+        break;
+
+      case 'active':
+        response.message = `Sedang memproses... (${jobStatus.progress}%)`;
+        break;
+
+      case 'completed':
+        response.message = 'Pembelian berhasil! Tiket sudah dikirim ke email Anda.';
+        response.data = jobStatus.result; // Result dari worker
+        break;
+
+      case 'failed':
+        response.success = false;
+        response.message = 'Pembelian gagal: ' + (jobStatus.failedReason || 'Unknown error');
+        response.code = 'PURCHASE_FAILED';
+
+        // Jika kuota habis, beri kode khusus
+        if (jobStatus.failedReason?.includes('habis')) {
+          response.code = 'KUOTA_HABIS';
+        }
+        break;
+
+      default:
+        response.message = 'Status tidak diketahui';
+    }
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('Check purchase status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengecek status pembelian'
+    });
+  }
+};
+
+// -----------------------------------------------------------------------------
+// VALIDATE TICKET - untuk scan QR code saat masuk event
+// -----------------------------------------------------------------------------
+/**
+ * Endpoint untuk validasi tiket dengan QR code
+ * Digunakan oleh admin untuk scan tiket saat user masuk event
+ * 
+ * @route GET /api/tickets/validate/:qrcode
+ * @access Private (Admin only)
+ */
 const validateTicket = async (req, res) => {
   try {
     const { qrcode } = req.params;
 
+    // -------------------------------------------------------------------------
+    // Find ticket by QR code
+    // -------------------------------------------------------------------------
     const ticket = await Ticket.findOne({
       where: { kode_qr: qrcode },
       include: [
@@ -126,24 +223,72 @@ const validateTicket = async (req, res) => {
     if (!ticket) {
       return res.status(404).json({
         success: false,
-        message: 'Tiket tidak ditemukan'
+        message: 'Tiket tidak ditemukan',
+        code: 'TICKET_NOT_FOUND'
       });
     }
 
+    // -------------------------------------------------------------------------
+    // Validate ticket status
+    // -------------------------------------------------------------------------
     if (ticket.status === 'digunakan') {
       return res.status(400).json({
         success: false,
-        message: 'Tiket sudah digunakan'
+        message: 'Tiket sudah pernah digunakan',
+        code: 'TICKET_ALREADY_USED',
+        data: {
+          used_at: ticket.updatedAt,
+          ticket_info: {
+            id: ticket.id,
+            user: ticket.User.nama,
+            event: ticket.Event.nama
+          }
+        }
       });
     }
 
+    if (ticket.status === 'expired') {
+      return res.status(400).json({
+        success: false,
+        message: 'Tiket sudah expired',
+        code: 'TICKET_EXPIRED'
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // Mark ticket as used
+    // -------------------------------------------------------------------------
     await ticket.update({ status: 'digunakan' });
 
+    // -------------------------------------------------------------------------
+    // Return success with ticket details
+    // -------------------------------------------------------------------------
     res.json({
       success: true,
       message: 'Tiket valid! Silakan masuk.',
-      data: ticket
+      code: 'TICKET_VALID',
+      data: {
+        ticket: {
+          id: ticket.id,
+          kode_qr: ticket.kode_qr,
+          status: 'digunakan',
+          waktu_beli: ticket.waktu_beli,
+          validated_at: new Date()
+        },
+        user: {
+          id: ticket.User.id,
+          nama: ticket.User.nama,
+          email: ticket.User.email
+        },
+        event: {
+          id: ticket.Event.id,
+          nama: ticket.Event.nama,
+          lokasi: ticket.Event.lokasi,
+          tanggal: ticket.Event.tanggal
+        }
+      }
     });
+
   } catch (error) {
     console.error('Validate ticket error:', error);
     res.status(500).json({
@@ -153,7 +298,47 @@ const validateTicket = async (req, res) => {
   }
 };
 
+// -----------------------------------------------------------------------------
+// GET USER TICKETS - untuk melihat daftar tiket user
+// -----------------------------------------------------------------------------
+/**
+ * Endpoint untuk melihat semua tiket yang dimiliki user
+ * 
+ * @route GET /api/tickets/my-tickets
+ * @access Private
+ */
+const getMyTickets = async (req, res) => {
+  try {
+    const user_id = req.user.id;
+
+    const tickets = await Ticket.findAll({
+      where: { user_id },
+      include: [
+        { model: Event }
+      ],
+      order: [['waktu_beli', 'DESC']]
+    });
+
+    res.json({
+      success: true,
+      data: tickets
+    });
+
+  } catch (error) {
+    console.error('Get my tickets error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengambil data tiket'
+    });
+  }
+};
+
+// -----------------------------------------------------------------------------
+// EXPORT
+// -----------------------------------------------------------------------------
 module.exports = {
   purchaseTicket,
-  validateTicket
+  checkPurchaseStatus,
+  validateTicket,
+  getMyTickets
 };

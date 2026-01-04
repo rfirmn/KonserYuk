@@ -1,0 +1,217 @@
+version: '3.8'
+
+# =============================================================================
+# DOCKER COMPOSE CONFIGURATION - KONSER YUK BACKEND
+# =============================================================================
+# File ini mendefinisikan infrastruktur untuk high-traffic ticket system:
+# 1. MySQL Master - untuk operasi WRITE (INSERT, UPDATE, DELETE)
+# 2. MySQL Slave - untuk operasi READ (SELECT) dengan replikasi otomatis
+# 3. Redis - untuk caching data dan message broker (BullMQ)
+# 4. Backend App - aplikasi Node.js Express
+# 5. Worker - consumer untuk memproses antrian pembelian tiket
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # MYSQL MASTER - Database utama untuk operasi WRITE
+  # ---------------------------------------------------------------------------
+  mysql-master:
+    image: mysql:8.0
+    container_name: konseryuk-mysql-master
+    environment:
+      # Konfigurasi database utama
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-konser_yuk}
+      MYSQL_USER: ${DB_USER:-konseruser}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-konserpassword}
+      
+      # Konfigurasi replikasi - Master
+      MYSQL_REPLICATION_MODE: master
+      MYSQL_REPLICATION_USER: replicator
+      MYSQL_REPLICATION_PASSWORD: replicatorpass
+    command:
+      # Enable binary logging untuk replikasi
+      - --log-bin=mysql-bin
+      - --server-id=1
+      - --binlog-do-db=${DB_NAME:-konser_yuk}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-master-data:/var/lib/mysql
+    networks:
+      - konseryuk-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # MYSQL SLAVE - Database replica untuk operasi READ (mengurangi beban master)
+  # ---------------------------------------------------------------------------
+  mysql-slave:
+    image: mysql:8.0
+    container_name: konseryuk-mysql-slave
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-konser_yuk}
+      MYSQL_USER: ${DB_USER:-konseruser}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-konserpassword}
+      
+      # Konfigurasi replikasi - Slave
+      MYSQL_REPLICATION_MODE: slave
+      MYSQL_MASTER_HOST: mysql-master
+      MYSQL_MASTER_PORT: 3306
+      MYSQL_MASTER_USER: replicator
+      MYSQL_MASTER_PASSWORD: replicatorpass
+    command:
+      # Konfigurasi sebagai slave dengan server-id berbeda
+      - --server-id=2
+      - --relay-log=mysql-relay-bin
+      - --log-bin=mysql-bin
+      - --read-only=1
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-slave-data:/var/lib/mysql
+    networks:
+      - konseryuk-network
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # REDIS - Untuk caching dan message broker (BullMQ)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: konseryuk-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redispassword}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - konseryuk-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # BACKEND APP - Node.js Express Application (HTTP Server)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: konseryuk-backend
+    environment:
+      # Database Configuration - Master/Slave
+      DB_NAME: ${DB_NAME:-konser_yuk}
+      DB_USER: ${DB_USER:-konseruser}
+      DB_PASSWORD: ${DB_PASSWORD:-konserpassword}
+      DB_MASTER_HOST: mysql-master
+      DB_SLAVE_HOST: mysql-slave
+      DB_PORT: 3306
+      
+      # JWT Configuration - Dual Token
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-your-super-secret-access-key-change-this}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-your-super-secret-refresh-key-change-this}
+      
+      # Redis Configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redispassword}
+      
+      # Cookie Configuration
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      
+      # Application
+      PORT: 5000
+      NODE_ENV: ${NODE_ENV:-development}
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - konseryuk-network
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+      mysql-slave:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # WORKER - BullMQ Consumer untuk memproses antrian pembelian tiket
+  # ---------------------------------------------------------------------------
+  # Worker ini berjalan secara terpisah dari backend app untuk:
+  # 1. Memproses pembelian tiket secara asynchronous
+  # 2. Mencegah race condition dengan atomic operations
+  # 3. Mengurangi beban pada HTTP server
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: konseryuk-worker
+    command: node server/worker.js
+    environment:
+      # Database Configuration (sama seperti backend)
+      DB_NAME: ${DB_NAME:-konser_yuk}
+      DB_USER: ${DB_USER:-konseruser}
+      DB_PASSWORD: ${DB_PASSWORD:-konserpassword}
+      DB_MASTER_HOST: mysql-master
+      DB_SLAVE_HOST: mysql-slave
+      DB_PORT: 3306
+      
+      # Redis Configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redispassword}
+      
+      # Worker Configuration
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-5}
+      NODE_ENV: ${NODE_ENV:-development}
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - konseryuk-network
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+      mysql-slave:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+# =============================================================================
+# NETWORKS - Jaringan internal untuk komunikasi antar container
+# =============================================================================
+networks:
+  konseryuk-network:
+    driver: bridge
+
+# =============================================================================
+# VOLUMES - Persistent storage untuk data
+# =============================================================================
+volumes:
+  mysql-master-data:
+    driver: local
+  mysql-slave-data:
+    driver: local
+  redis-data:
+    driver: local

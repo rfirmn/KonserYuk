@@ -1,0 +1,41 @@
+# =============================================================================
+# DOCKERIGNORE - File yang dikecualikan dari Docker build context
+# =============================================================================
+# Mengecualikan file-file yang tidak perlu dalam Docker image untuk:
+# 1. Mempercepat build time
+# 2. Mengurangi ukuran image
+# 3. Meningkatkan security (tidak include credentials)
+# =============================================================================
+
+# Node modules (akan di-install di dalam container)
+node_modules
+npm-debug.log
+
+# Environment variables (sensitive data)
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Test coverage
+coverage
+.nyc_output
+
+# Temporary files
+*.tmp
+*.temp

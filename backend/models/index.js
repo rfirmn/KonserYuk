@@ -26,6 +26,21 @@ const User = sequelize.define('User', {
   role: {
     type: DataTypes.ENUM('user', 'admin'),
     defaultValue: 'user'
+  },
+  // -------------------------------------------------------------------------
+  // REFRESH TOKEN FIELDS - untuk dual-token JWT authentication system
+  // -------------------------------------------------------------------------
+  // Refresh token disimpan di database untuk validasi saat refresh
+  // Access token (short-lived) tidak perlu disimpan karena self-contained
+  refresh_token: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'JWT refresh token untuk mendapatkan access token baru'
+  },
+  refresh_token_expires: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: 'Waktu expiry untuk refresh token'
   }
 }, {
   tableName: 'users',

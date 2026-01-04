@@ -182,7 +182,7 @@ async function startServer() {
     // STEP 2: Database Sync
     // -------------------------------------------------------------------------
     console.log('\n[2/4] Syncing database models...');
-    await db.sync({ alter: false }); // alter: true untuk development
+    await db.sync({ alter: true }); // alter: true untuk development
     console.log('✓ Database models synced');
 
     // -------------------------------------------------------------------------

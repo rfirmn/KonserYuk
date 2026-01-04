@@ -42,7 +42,7 @@ const sequelize = new Sequelize(
       read: [
         {
           host: process.env.DB_SLAVE_HOST || 'localhost',
-          port: process.env.DB_SLAVE_PORT || 3307, // Port berbeda untuk slave
+          port: process.env.DB_SLAVE_PORT || 3306, // Port berbeda untuk slave
           username: process.env.DB_USER || 'root',
           password: process.env.DB_PASSWORD || ''
         }
